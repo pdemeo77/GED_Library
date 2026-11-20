@@ -204,7 +204,33 @@ only. Decision pending.
 
 
 
+## Blind cross-verification (independent second reviewer, 2026-11-20)
+
+An independent verifier (DeepSeek, via OpenCode) re-assessed the six most severe
+findings WITHOUT access to this report. **Result: full convergence — all six
+confirmed TRUE**, two of them with synthetic numerical reproduction.
+
+Precision corrections adopted from the second reviewer:
+- S3: the "~1.5x overcount" is the nested-edge-set special case, not a universal
+  factor; in general the local edge term adds `|E1-E2|/2` even for full mappings
+  where upstream adds 0.
+- S4: EGSC `fc0` adds one net Linear+ReLU pair relative to upstream `fc1`
+  (the block itself has two).
+- S5(c): Grasp's final concat receives post-ReLU but pre-dropout tensors; only
+  the pattern matrices receive post-dropout ones; `x5` is raw in both.
+
+Additional findings from the second reviewer (to include in the fix wave):
+1. `max_res = -1` in `_expand` assumes non-negative weights: with raw logits
+   (S2) even a fixed root LB (S1) would still reject all subspaces — the two
+   bugs compound.
+2. `gedgnn_full.py` wraps the whole k-best call in `try/except Exception: pass`,
+   silently masking failures — narrow it and log.
+
+## Remaining work
+
 - [x] All 13 solvers verified (2026-11-20)
-- [ ] Decide fix policy per deviation (align to upstream vs document)
-- [ ] Property-based tests with networkx exact GED (identity, symmetry, bounds)
-- [ ] HED port (row 14 of solver.md)
+- [x] Blind cross-verification by independent second reviewer (2026-11-20)
+- [ ] Apply fix wave A+B (bugs + design alignment) with regression tests
+- [ ] TaGED integration (richer ground truth: mappings + decomposed GEDs)
+- [ ] Property-based tests with exact GED (networkx now; FORI later)
+- [ ] HED port (row 14) and FORI exact solver (row 15)
