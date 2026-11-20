@@ -80,16 +80,18 @@ Verified: identical to our AIDS ground truth on all 245,350 pairs.
       (paper in `docs/papers/`), implement via `scipy.optimize.milp` (HiGHS),
       constraints 5a–5g; verify against their published optimal solutions
 
-### 5. Code quality phases (from the original roadmap)
+### 5. Code quality phases (P2/P3/P4)
 
 - [ ] P2: shared `_GINBackbone` extraction review after fix wave; unified
-      label-map utility; export `GEDTrainer`; `requires_fit` contract
+      label-map utility; export `GEDTrainer`; `GEDSFSolver`/`FGWAlignSolver`
+      in `__all__` only when the import succeeds; `requires_fit` contract
 - [ ] P3: trainer shuffle + seed, LR scheduler, upstream training protocol
       (delta graphs, batch, weight decay) — decide per-solver
 - [ ] P4.1: clean the 37 ruff errors, then make lint a blocking CI gate
       (remove `--exit-zero` in `ci.yml`)
 - [ ] P4.2: GEDTrainer smoke test, failing-solver evaluation test, IMDB/Linux
       end-to-end tests; investigate slow tests (`--durations`)
+- [ ] Verify `examples/quickstart.py` runs on a clean clone
 
 ### 6. Full evaluation (office machine, week-long, block-based)
 

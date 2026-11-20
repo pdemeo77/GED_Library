@@ -28,7 +28,6 @@ results/
 *.pt
 
 # Local-only working notes (NOT for the public repo)
-AGENTS.md
 code_review.md
 PLAN.md
 PLAN_session16.md
