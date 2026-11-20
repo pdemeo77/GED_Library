@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ged-lib"
+version = "0.1.0"
+description = "A Python library for approximating Graph Edit Distance with a uniform scikit-learn-like interface"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "GED_Library contributors"}
+]
+keywords = ["graph-edit-distance", "graph-matching", "ged", "approximation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "numpy>=1.21",
+    "scipy>=1.7",
+    "networkx>=2.6",
+]
+
+[project.optional-dependencies]
+ot = ["pot>=0.8", "torch>=2.0"]
+neural = ["torch>=2.0", "torch_geometric>=2.5", "pot>=0.8"]
+sf = ["scikit-learn>=1.0", "xgboost>=1.5", "lightgbm>=3.0"]
+plot = ["matplotlib>=3.4"]
+dev = ["pytest>=7.0", "ruff>=0.1"]
+
+[tool.setuptools.packages.find]
+include = ["ged_lib*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"

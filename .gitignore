@@ -1,0 +1,48 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+
+# Model checkpoints & results (regenerated locally)
+checkpoints/
+results/
+*.pt
+
+# Local-only working notes (NOT for the public repo)
+AGENTS.md
+code_review.md
+PLAN.md
+PLAN_session16.md
+ROADMAP.md
+SESSION_LOG.md
+SESSION_LOG/
+
+# Local paper PDFs (copyright: keep out of the public repo)
+docs/papers/
+
+# Local tooling config (Kilo)
+.kilo/
+kilo.json
+
+# OS artifacts
+.DS_Store
+Thumbs.db

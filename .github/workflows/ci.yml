@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: python -m pip install ruff
+        # Report-only for now: the 37 pre-existing errors are cleaned up in
+        # roadmap phase P4.1, after which --exit-zero is removed and this
+        # job becomes a blocking gate.
+      - name: Lint (report-only until P4.1)
+        run: ruff check . --exit-zero
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install library with all extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev,ot,neural,sf]
+      - name: Run test suite
+        run: python -m pytest tests/ -v
