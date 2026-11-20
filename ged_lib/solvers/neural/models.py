@@ -517,9 +517,16 @@ class TaGSimSolver(NeuralGEDSolver):
 
 @register_solver("gpn")
 class GPNSolver(NeuralGEDSolver):
-    """Graph Pair Network (GPN) solver.
+    """Graph Path Network (GPN) solver.
 
-    Uses GIN embeddings + matching modules for cross-graph comparison.
+    The GNN of the Noah framework: GIN embeddings + matching modules for
+    cross-graph comparison. Included here via the GED-via-Optimal-Transport
+    codebase (Cheng et al., SIGMOD 2025).
+
+    Reference:
+        Yang, L., & Zou, L. (2021). Noah: Neural-optimized A* Search Algorithm
+        for Graph Edit Distance Computation. ICDE 2021, pp. 576-587.
+        https://github.com/pkumod/Noah-GED
     """
 
     def __init__(

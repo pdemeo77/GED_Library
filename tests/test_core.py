@@ -25,6 +25,22 @@ class TestCostModel:
         g2.add_node(0, label="N")
         assert cm.node_sub_cost(g1, g2, 0, 0) == 1.0
 
+    def test_float_sub_costs_accepted(self):
+        """Float substitution costs must work as documented (regression: raised TypeError)."""
+        from ged_lib.cost import CostModel
+
+        cm = CostModel(node_sub_cost=0.5, edge_sub_cost=0.25)
+        g1 = nx.Graph()
+        g1.add_node(0, label="C")
+        g1.add_node(1, label="C")
+        g1.add_edge(0, 1)
+        g2 = nx.Graph()
+        g2.add_node(0, label="N")
+        g2.add_node(1, label="N")
+        g2.add_edge(0, 1)
+        assert cm.node_sub_cost(g1, g2, 0, 0) == 0.5
+        assert cm.edge_sub_cost(g1, g2, (0, 1), (0, 1)) == 0.25
+
     def test_unit_cost(self):
         from ged_lib.cost import UnitCostModel
 

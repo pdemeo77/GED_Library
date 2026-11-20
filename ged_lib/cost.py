@@ -39,13 +39,19 @@ class CostModel:
 
         if node_sub_cost is None:
             self._node_sub_cost = self._default_node_sub_cost
-        else:
+        elif callable(node_sub_cost):
             self._node_sub_cost = node_sub_cost
+        else:
+            const_node = float(node_sub_cost)
+            self._node_sub_cost = lambda g1, g2, u, v: const_node
 
         if edge_sub_cost is None:
             self._edge_sub_cost = self._default_edge_sub_cost
-        else:
+        elif callable(edge_sub_cost):
             self._edge_sub_cost = edge_sub_cost
+        else:
+            const_edge = float(edge_sub_cost)
+            self._edge_sub_cost = lambda g1, g2, e1, e2: const_edge
 
     @staticmethod
     def _default_node_sub_cost(g1: nx.Graph, g2: nx.Graph, u: int, v: int) -> float:
