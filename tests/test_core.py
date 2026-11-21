@@ -472,6 +472,105 @@ class TestKBestMatchingFixes:
         assert torch.equal(w, w.round())
 
 
+class TestTrainerMappingLoss:
+    """GEDTrainer with TaGED mapping/component losses (upstream regimes)."""
+
+    @staticmethod
+    def _synthetic_taged(trainer):
+        """Build a synthetic TaGED dict consistent with trainer.train_pairs."""
+        taged = {}
+        for id1, id2, ged in trainer.train_pairs:
+            n1 = trainer.graphs[id1].number_of_nodes()
+            n2 = trainer.graphs[id2].number_of_nodes()
+            small, big = min(n1, n2), max(n1, n2)
+            # one valid matching: identity on the first `small` big-nodes
+            matchings = [list(range(small))]
+            taged[(id1, id2)] = (ged, 1.0, 0.0, 0.0, matchings)
+        return taged
+
+    def _tiny_trainer(self, model, tmp_path, mapping_loss=None):
+        from ged_lib.solvers.neural.trainer import GEDTrainer
+
+        return GEDTrainer(
+            model,
+            dataset_name="AIDS",
+            num_epochs=1,
+            batch_size=8,
+            max_pairs=16,
+            save_dir=str(tmp_path / "ckpts"),
+            mapping_loss=mapping_loss,
+        )
+
+    def test_mapping_loss_gediot(self, tmp_path):
+        import torch
+
+        from ged_lib import GEDIOTSolver
+
+        torch.manual_seed(0)
+        trainer = self._tiny_trainer(GEDIOTSolver(num_labels=29), tmp_path)
+        trainer._taged = self._synthetic_taged(trainer)
+        trainer.mapping_loss = True
+        history = trainer.train()
+        assert len(history["train_loss"]) == 1
+        assert history["train_loss"][0] == history["train_loss"][0]  # finite
+        assert trainer.used_mapping_loss, "mapping loss term was never applied"
+
+    def test_mapping_loss_gedgnn_weight_regime(self, tmp_path):
+        import torch
+
+        from ged_lib import GedGNNSolver
+
+        torch.manual_seed(0)
+        trainer = self._tiny_trainer(GedGNNSolver(num_labels=29), tmp_path)
+        trainer._taged = self._synthetic_taged(trainer)
+        trainer.mapping_loss = True
+        trainer.train()
+        assert trainer.used_mapping_loss
+
+    def test_component_loss_tagsim(self, tmp_path):
+        import torch
+
+        from ged_lib import TaGSimSolver
+
+        torch.manual_seed(0)
+        trainer = self._tiny_trainer(TaGSimSolver(num_labels=29), tmp_path)
+        trainer._taged = self._synthetic_taged(trainer)
+        trainer.mapping_loss = True
+        trainer.train()
+        assert trainer.used_component_loss, "TaGSim component loss was never applied"
+
+    def test_no_taged_falls_back_to_mse(self, tmp_path):
+        import torch
+
+        from ged_lib import GEDIOTSolver
+
+        torch.manual_seed(0)
+        trainer = self._tiny_trainer(GEDIOTSolver(num_labels=29), tmp_path)
+        trainer._taged = None
+        trainer.mapping_loss = False
+        trainer.train()
+        assert not trainer.used_mapping_loss and not trainer.used_component_loss
+
+    def test_real_taged_end_to_end(self, tmp_path):
+        """End-to-end with the real downloaded TaGED.json (skipped if absent)."""
+        from pathlib import Path
+
+        import torch
+
+        from ged_lib import GedGNNSolver
+
+        taged_path = Path(__file__).resolve().parent.parent / "True_GED" / "AIDS" / "TaGED.json"
+        if not taged_path.exists():
+            pytest.skip("TaGED.json not downloaded (scripts/download_taged.py)")
+
+        torch.manual_seed(0)
+        trainer = self._tiny_trainer(GedGNNSolver(num_labels=29), tmp_path)
+        assert trainer._taged is not None and len(trainer._taged) > 200_000
+        assert trainer.mapping_loss is True
+        trainer.train()
+        assert trainer.used_mapping_loss
+
+
 class TestTaGEDLoader:
     """Tests for the TaGED (mapping-augmented ground truth) loader."""
 
@@ -490,15 +589,18 @@ class TestTaGEDLoader:
         root = self._write_taged(
             tmp_path,
             [
+                # one matching [0, 1]: small-graph node 0 -> 0, node 1 -> 1
                 [8116, 559, 1, 1, 0, 0, [[0, 1]]],
+                # TWO matchings: [2, 0] and [1, 0] (each length n_small)
                 [8116, 5726, 3, 1, 1, 1, [[2, 0], [1, 0]]],
             ],
         )
         taged = load_taged("aids", root=str(root))
         assert set(taged) == {(8116, 559), (8116, 5726)}
-        ged, nc, in_, ie, mappings = taged[(8116, 559)]
+        ged, nc, in_, ie, matchings = taged[(8116, 559)]
         assert (ged, nc, in_, ie) == (1.0, 1.0, 0.0, 0.0)
-        assert mappings == [[0, 1]]
+        assert matchings == [[0, 1]]
+        assert taged[(8116, 5726)][4] == [[2, 0], [1, 0]]
 
     def test_load_taged_missing_raises(self, tmp_path):
         from ged_lib.dataset.loader import load_taged
@@ -506,17 +608,32 @@ class TestTaGEDLoader:
         with pytest.raises(FileNotFoundError, match="download_taged"):
             load_taged("AIDS", root=str(tmp_path))
 
-    def test_lookup_swaps_reversed_mapping(self):
+    def test_lookup_both_orders_stored_orientation(self):
         from ged_lib.dataset.loader import taged_lookup
 
-        taged = {(1, 2): (3.0, 1.0, 1.0, 1.0, [[0, 4], [1, 5]])}
-        # forward order: mapping unchanged
+        # stored (small=1, big=2): two matchings, small-graph orientation
+        taged = {(1, 2): (3.0, 1.0, 1.0, 1.0, [[0, 1], [1, 0]])}
         _, _, _, _, m = taged_lookup(taged, 1, 2)
-        assert m == [[0, 4], [1, 5]]
-        # reversed order: mapping pairs must be swapped
-        _, _, _, _, m_rev = taged_lookup(taged, 2, 1)
-        assert m_rev == [[4, 0], [5, 1]]
+        assert m == [[0, 1], [1, 0]]
+        # reversed query: same entry, same stored orientation
+        assert taged_lookup(taged, 2, 1) == taged_lookup(taged, 1, 2)
         assert taged_lookup(taged, 7, 8) is None
+
+    def test_taged_mapping_matrix_union(self):
+        import numpy as np
+
+        from ged_lib.dataset.loader import taged_mapping_matrix
+
+        # matchings [0,1] -> (0,0),(1,1); [1,0] -> (0,1),(1,0)
+        matchings = [[0, 1], [1, 0]]
+        # g1 is the smaller side (n1=2, n2=3): direct orientation
+        m = taged_mapping_matrix(matchings, 2, 3)
+        assert m.shape == (2, 3)
+        assert np.array_equal(m, np.array([[1.0, 1.0, 0.0], [1.0, 1.0, 0.0]]))
+        # g2 is the smaller side (n1=3, n2=2): transposed orientation
+        m_t = taged_mapping_matrix(matchings, 3, 2)
+        assert m_t.shape == (3, 2)
+        assert np.array_equal(m_t, np.array([[1.0, 1.0], [1.0, 1.0], [0.0, 0.0]]))
 
 
 class TestUpstreamAlignmentFixes:

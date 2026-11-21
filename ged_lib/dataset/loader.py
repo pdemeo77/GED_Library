@@ -85,8 +85,12 @@ def load_labels(name: str, root: Optional[str] = None) -> Optional[dict[str, int
     return None
 
 
-# TaGED entry: (ged, ged_nc, ged_in, ged_ie, mappings) where mappings is a
-# list of [node_in_graph1, node_in_graph2] pairs of one optimal assignment.
+# TaGED entry: (ged, ged_nc, ged_in, ged_ie, mappings). Per the upstream
+# load_ged docstring (chengqihao utils.py), mappings is a list of up to 10
+# BEST matchings; each matching is a list of length n_small where
+# matching[u] = v maps node u of the smaller graph to node v of the larger
+# one (entries are stored as (small_id, big_id) with n1 <= n2).
+# ged = ged_nc + ged_in + ged_ie (TaGSim decomposition).
 TaGEDEntry = tuple[float, float, float, float, list]
 
 
@@ -95,11 +99,14 @@ def load_taged(name: str, root: Optional[str] = None) -> dict[tuple[int, int], T
 
     TaGED.json (from chengqihao/GED-via-Optimal-Transport and
     ChengzhiPiao/GEDGNN) contains, for every graph pair,
-    ``[id1, id2, ged, ged_nc, ged_in, ged_ie, [best_node_mapping]]`` where
+    ``[id1, id2, ged, ged_nc, ged_in, ged_ie, [best_matchings]]`` where
     ``ged = ged_nc + ged_in + ged_ie`` decomposes the GED into node
     relabelings / node insertions / edge insertions (TaGSim convention) and
-    the mapping is one optimal node assignment. Verified identical to the
-    scalar ``true_ged`` of our True_GED CSVs on all AIDS pairs.
+    ``best_matchings`` is a list of up to 10 optimal node matchings, each a
+    list of length n_small mapping smaller-graph nodes to larger-graph nodes
+    (pairs are stored as (small_id, big_id), n1 <= n2). Verified identical
+    to the scalar ``true_ged`` of our True_GED CSVs on all AIDS pairs, and
+    the matching structure validated on 200 random pairs.
 
     Fetch the files with ``python scripts/download_taged.py`` (they are
     large and gitignored). The parsed dictionary is NOT cached — callers
@@ -112,7 +119,7 @@ def load_taged(name: str, root: Optional[str] = None) -> dict[tuple[int, int], T
 
     Returns:
         Dictionary mapping (id_1, id_2) to
-        (ged, ged_nc, ged_in, ged_ie, mappings).
+        (ged, ged_nc, ged_in, ged_ie, matchings).
 
     Raises:
         FileNotFoundError: If TaGED.json has not been downloaded yet.
@@ -139,16 +146,52 @@ def taged_lookup(
 ) -> Optional[TaGEDEntry]:
     """Look up a pair in a TaGED dictionary, trying both orders.
 
-    When the entry is stored in the reversed order, the returned mapping is
-    swapped so that node pairs always read [node_in_id1_graph, node_in_id2_graph].
+    The returned matchings are ALWAYS in stored orientation (small-graph
+    node -> big-graph node), regardless of the query order. Use
+    :func:`taged_mapping_matrix` to build the (n1, n2) union matrix for a
+    specific pair orientation — it handles the transposition when the
+    smaller graph is the second one.
 
     Returns None when the pair is not present.
     """
-    entry = taged.get((id1, id2))
-    if entry is not None:
-        return entry
-    entry = taged.get((id2, id1))
-    if entry is None:
-        return None
-    ged, nc, in_, ie, mappings = entry
-    return (ged, nc, in_, ie, [[v, u] for u, v in mappings])
+    return taged.get((id1, id2)) or taged.get((id2, id1)) or None
+
+
+def taged_mapping_matrix(mappings: list, n1: int, n2: int) -> "np.ndarray":
+    """Union 0/1 mapping matrix (n1 x n2) from TaGED best matchings.
+
+    Mirrors upstream transfer_data_to_torch: every matching contributes 1s
+    at (x, y) for x -> y; with up to 10 optimal matchings the union marks
+    ALL node pairs that participate in some optimal assignment.
+
+    Matchings index the SMALLER graph. If their length equals n1 they are
+    used directly (g1 is the smaller side); if it equals n2 they are
+    transposed (g2 is the smaller side). Requires matchings to be present
+    in the orientation consistent with (n1, n2).
+    """
+    import numpy as np
+
+    if not mappings:
+        raise ValueError("No matchings available for this pair.")
+    matchings_arr = [m for m in mappings if len(m) > 0]
+    if len(matchings_arr[0]) == n1:
+        small_is_g1 = True
+    elif len(matchings_arr[0]) == n2 and n1 != n2:
+        small_is_g1 = False
+    elif n1 == n2:
+        small_is_g1 = True  # ambiguous; direct orientation
+    else:
+        raise ValueError(
+            f"Matching length {len(matchings_arr[0])} matches neither n1={n1} nor n2={n2}."
+        )
+
+    matrix = np.zeros((n1, n2), dtype=np.float32)
+    for m in matchings_arr:
+        for x, y in enumerate(m):
+            if small_is_g1:
+                if 0 <= x < n1 and 0 <= y < n2:
+                    matrix[x, y] = 1.0
+            else:
+                if 0 <= y < n1 and 0 <= x < n2:
+                    matrix[y, x] = 1.0
+    return matrix

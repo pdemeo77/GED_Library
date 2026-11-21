@@ -29,6 +29,20 @@ class GEDTrainer:
     Handles data loading, batching, training loop, checkpointing,
     and evaluation against ground truth.
 
+    When the mapping-augmented TaGED ground truth is available
+    (``python scripts/download_taged.py``), the trainer applies the exact
+    upstream losses (chengqihao/GED-via-Optimal-Transport, Grasp repo):
+
+    - GedGNN / GedGNN-Full: ``fixed_mapping_loss(map, gt) + w * MSE``,
+      w = 10.0 (AIDS/Linux) or 1.0 (IMDB)
+    - GEDIOT / Grasp: ``(10 - 8) * fixed_mapping_loss(map, gt) + 8 * MSE``
+    - TaGSim: per-component MSE against
+      ``[exp(-nc/avg_v), exp(-in/avg_v), exp(-ie/avg_v)]``
+    - GPN / SimGNN and everything else: plain MSE (upstream behaviour)
+
+    Without TaGED the trainer behaves exactly as before (value-supervised
+    MSE only).
+
     Args:
         model: A NeuralGEDSolver instance to train.
         dataset_name: One of "AIDS", "IMDB", "Linux".
@@ -36,9 +50,14 @@ class GEDTrainer:
         batch_size: Batch size for training.
         learning_rate: Adam optimizer learning rate.
         weight_decay: Adam weight decay.
-        loss_weight: Weight for mapping loss vs score loss.
+        loss_weight: Fallback weight kept for backward compatibility.
         save_dir: Directory to save model checkpoints.
         device: Torch device string.
+        mapping_loss: Use the TaGED mapping/component losses when the data
+            is available. None (default) = auto-enable when TaGED.json
+            exists for the dataset.
+        max_pairs: Cap on the number of pairs per split (train/val/test).
+        taged_root: Root containing True_GED/<DS>/TaGED.json (default: project).
     """
 
     def __init__(
@@ -52,6 +71,9 @@ class GEDTrainer:
         loss_weight: float = 8.0,
         save_dir: str = "checkpoints",
         device: str = "cpu",
+        mapping_loss: Optional[bool] = None,
+        max_pairs: int = 5000,
+        taged_root: Optional[str] = None,
     ) -> None:
         self.model = model
         self.dataset_name = dataset_name.upper()
@@ -63,6 +85,12 @@ class GEDTrainer:
         self.device = torch.device(device)
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.max_pairs = max_pairs
+        self.taged_root = taged_root
+        self._mapping_loss_requested = mapping_loss
+
+        self.used_mapping_loss = False
+        self.used_component_loss = False
 
         self.num_labels = 1
         self._graph_cache: dict = {}  # gid -> {edge_index, features, n, m}
@@ -101,6 +129,22 @@ class GEDTrainer:
         self.val_pairs = self._make_pairs(self.val_ids)
         self.test_pairs = self._make_pairs(self.test_ids)
 
+        self._taged = self._load_taged()
+        if self._mapping_loss_requested is None:
+            self.mapping_loss = self._taged is not None
+        else:
+            self.mapping_loss = self._mapping_loss_requested and self._taged is not None
+            if self._mapping_loss_requested and self._taged is None:
+                print(
+                    "WARNING: mapping_loss=True but TaGED.json is not available "
+                    "(python scripts/download_taged.py); falling back to MSE only."
+                )
+        if self.mapping_loss:
+            print(
+                "TaGED ground truth loaded: mapping/component losses ENABLED "
+                f"({len(self._taged)} pairs)"
+            )
+
         print(
             f"Loaded {self.dataset_name}: {n} graphs, "
             f"{len(self.train_pairs)} train pairs, "
@@ -108,8 +152,19 @@ class GEDTrainer:
             f"{len(self.test_pairs)} test pairs"
         )
 
-    def _make_pairs(self, graph_ids: list, max_pairs: int = 5000) -> list:
+    def _load_taged(self):
+        """Load the TaGED mapping ground truth if available (None otherwise)."""
+        from ged_lib.dataset.loader import load_taged
+
+        try:
+            return load_taged(self.dataset_name, root=self.taged_root)
+        except FileNotFoundError:
+            return None
+
+    def _make_pairs(self, graph_ids: list, max_pairs: Optional[int] = None) -> list:
         """Create graph pairs from a list of graph IDs using ground truth."""
+        if max_pairs is None:
+            max_pairs = self.max_pairs
         pairs = []
         id_set = set(graph_ids)
         for (id1, id2), ged in self.gt_dict.items():
@@ -181,6 +236,18 @@ class GEDTrainer:
             elif self.model.target_mode == "linear":
                 data["target"] = torch.tensor([true_ged / hb]).float().to(self.device)
 
+        if self._taged is not None:
+            from ged_lib.dataset.loader import taged_lookup, taged_mapping_matrix
+
+            entry = taged_lookup(self._taged, id1, id2)
+            if entry is not None and entry[4]:
+                try:
+                    matrix = taged_mapping_matrix(entry[4], n1, n2)
+                    data["gt_map"] = torch.from_numpy(matrix).to(self.device)
+                    data["ta_components"] = (entry[1], entry[2], entry[3])
+                except ValueError:
+                    pass  # orientation mismatch for this pair; MSE only
+
         return data
 
     def train(self) -> dict:
@@ -200,6 +267,21 @@ class GEDTrainer:
         history = {"train_loss": [], "val_mae": [], "val_spearman": []}
         is_tagsim = hasattr(self.model, "tensor_nc")
 
+        # Upstream per-model loss regimes (chengqihao trainer.setup_model /
+        # process_batch; Grasp trainer.py).
+        model_name = type(self.model).__name__
+        if model_name in ("GedGNNSolver", "GEDGNNFullSolver"):
+            # fixed_mapping_loss + weight*MSE, weight 10.0 (AIDS/Linux) / 1.0 (IMDB)
+            if self.dataset_name in ("AIDS", "LINUX"):
+                mse_weight, map_coef = 10.0, 1.0
+            else:
+                mse_weight, map_coef = 1.0, 1.0
+        elif model_name in ("GEDIOTSolver", "GraspSolver"):
+            # (10 - 8) * fixed_mapping_loss + 8 * MSE
+            mse_weight, map_coef = 8.0, 2.0
+        else:
+            mse_weight, map_coef = None, None
+
         for epoch in range(self.num_epochs):
             self.model.train()
             np.random.shuffle(self.train_pairs)
@@ -217,10 +299,28 @@ class GEDTrainer:
 
                     if is_tagsim:
                         prediction, _ = self.model(data)
-                        # TaGSim returns a 3-element tensor [nc, in, ie] that is
-                        # summed at inference. Compute loss on the sum vs. target
-                        # to avoid broadcasting each sub-component to the full GED.
-                        if prediction.shape[0] == 3:
+                        components = data.get("ta_components")
+                        if (
+                            self.mapping_loss
+                            and components is not None
+                            and self.model.target_mode == "exp"
+                            and prediction.shape[0] == 3
+                        ):
+                            # Upstream: MSE([exp(-nc/avg), exp(-in/avg),
+                            # exp(-ie/avg)], [s_nc, s_in, s_ie])
+                            nc, in_, ie = components
+                            ta_target = torch.exp(
+                                torch.tensor(
+                                    [-nc / data["avg_v"], -in_ / data["avg_v"], -ie / data["avg_v"]],
+                                    device=self.device,
+                                )
+                            ).float()
+                            batch_loss = batch_loss + F.mse_loss(
+                                ta_target, prediction
+                            )
+                            self.used_component_loss = True
+                        elif prediction.shape[0] == 3:
+                            # Fallback (no TaGED): loss on the summed score
                             batch_loss = batch_loss + F.mse_loss(
                                 prediction.sum().unsqueeze(0), target
                             )
@@ -229,7 +329,24 @@ class GEDTrainer:
                     else:
                         output = self.model(data)
                         prediction = output[0]
-                        batch_loss = batch_loss + F.mse_loss(target, prediction)
+                        gt_map = data.get("gt_map")
+                        if (
+                            self.mapping_loss
+                            and gt_map is not None
+                            and map_coef is not None
+                            and len(output) >= 3
+                        ):
+                            mapping = output[2]
+                            if mapping.shape == gt_map.shape:
+                                batch_loss = batch_loss + (
+                                    map_coef * fixed_mapping_loss(mapping, gt_map)
+                                    + mse_weight * F.mse_loss(target, prediction)
+                                )
+                                self.used_mapping_loss = True
+                            else:
+                                batch_loss = batch_loss + F.mse_loss(target, prediction)
+                        else:
+                            batch_loss = batch_loss + F.mse_loss(target, prediction)
 
                 batch_loss = batch_loss / len(batch)
                 batch_loss.backward()
