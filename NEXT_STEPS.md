@@ -23,36 +23,33 @@
 
 ## Priority queue
 
-### 1. Fix wave A+B — correctness bugs + upstream alignment 🔥
+### 1. Fix wave A+B — correctness bugs + upstream alignment 🔥 ✅ DONE 2026-11-21
 
 Source and evidence: `docs/verification_report.md` (confirmed by two
 independent reviews). Each fix needs a regression test.
 
-**A — certain bugs:**
-- [ ] `kbest_matching.py:256` — root LB init `compute([], best_matching)` →
-      upstream `label_set([], [])`; makes the k-best search actually run
-- [ ] `gedgnn_full.py:199` — feed `round(Softmax(dim=1)(map)·1e9 + 1)` to the
-      k-best solver, not raw logits (also fixes the compounding `max_res=-1` issue)
-- [ ] `kbest_matching.py:99-113` — edge term must count edges OUTSIDE the mapped
-      subgraph, not total edge-count difference
-- [ ] `gedgnn_full.py:206-214` — narrow the `except Exception: pass`, log failures
-- [ ] `kbest_matching.py:115-125` — unlabeled-graph branch: `|n2−n1|` instead of
-      the constant-feature sums (IMDB/Linux lower bound)
-- [ ] `egsc.py:76-83` — remove the extra `fc0` block from the SE tensor-network
-      head (net one Linear+ReLU pair too many vs upstream)
-- [ ] `grasp.py` — (a) degree without self-loops, (b) degree out of final MLP,
-      (c) raw conv outputs (pre-ReLU) into pattern matrices and final concat
-- [ ] `grasp.py:191-203` — dropout configurable, not hardcoded 0.5
+**A — certain bugs (commits 66e0f0d, 3afd83e, 83c6371):**
+- [x] `kbest_matching.py` — root LB init `compute([], [])` (unconstrained,
+      upstream `label_set`); the k-best search actually runs now
+- [x] `gedgnn_full.py` — weights `round(Softmax(dim=1)(map)·1e9 + 1)`;
+      answer `min(neural_ged, solver.min_ged)`; failures logged, not swallowed
+- [x] `kbest_matching.py` — edge term counts edges OUTSIDE the mapped subgraph
+- [x] `kbest_matching.py` — unlabeled branch uses `|n2−n1|`
+- [x] `egsc.py` — fc0 block removed from the SE tensor-network head
+- [x] `grasp.py` — degree without self-loops; degree out of final MLP;
+      raw conv outputs into patterns/concat; dropout configurable
 
-**B — design alignment to upstream (checkpoints are throwaway, zero cost):**
-- [ ] GedGNN + GedGNN-Full: plain 3-layer GIN encoder (upstream GedGNN), keeping
-      the multi-scale encoder only for GEDIOT
-- [ ] SimGNN: single-bottleneck prediction head (Rozemberczki reference)
-- [ ] GPN: default `target_mode="linear"`; upstream default dims
-- [ ] GEDIOT: upstream default filters (128,64,32) / bottleneck (16,8,4)
-- [ ] `layers.py`: NTN bias init `xavier_uniform_` (upstream)
-- [ ] GEDGW: labeled graphs without `dataset_name` → build label encoding over
-      the union of both graphs (or require `dataset_name` explicitly)
+**B — design alignment (commit f41a406; checkpoints were throwaway):**
+- [x] GedGNN + GedGNN-Full: plain 3-layer GIN encoder (`_PlainGINEncoder`);
+      multi-scale encoder exclusive to GEDIOT
+- [x] SimGNN: single-bottleneck head (Rozemberczki reference)
+- [x] GPN: `target_mode="linear"`, filters (128,64,32), bottleneck (16,)
+- [x] GEDIOT/GedGNN/GedGNN-Full: upstream defaults (128,64,32)/(16,8,4)
+- [x] `layers.py`: NTN bias init `xavier_uniform_`
+- [x] GEDGW: union label encoding across the pair when no dataset map
+
+18 regression tests added (TestKBestMatchingFixes, TestEGSCFixes,
+TestGraspFixes, TestUpstreamAlignmentFixes).
 
 ### 2. TaGED integration — richer ground truth (approved, data validated)
 

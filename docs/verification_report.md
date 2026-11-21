@@ -230,7 +230,8 @@ Additional findings from the second reviewer (to include in the fix wave):
 
 - [x] All 13 solvers verified (2026-11-20)
 - [x] Blind cross-verification by independent second reviewer (2026-11-20)
-- [ ] Apply fix wave A+B (bugs + design alignment) with regression tests
+- [x] Fix wave A+B applied with 18 regression tests (2026-11-21; commits
+      66e0f0d, 3afd83e, 83c6371, f41a406)
 - [ ] TaGED integration (richer ground truth: mappings + decomposed GEDs)
 - [ ] Property-based tests with exact GED (networkx now; FORI later)
 - [ ] HED port (row 14) and FORI exact solver (row 15)
