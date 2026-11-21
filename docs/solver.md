@@ -14,4 +14,11 @@
 | 12 | gedgnnfull — GEDGNNFullSolver | — | neurale + k-best | Piao et al. (2023), PVLDB ⬜ titolo | ChengzhiPiao/GEDGNN |
 | 13 | grasp — GraspSolver | — | neurale | Lee et al. ⬜ titolo/venue | JunkyuLee1/Grasp |
 | 14 | hed — HEDSolver (da aggiungere) | — | classico | Fischer et al. (2015), Approximation of graph edit distance based on Hausdorff matching ⬜ venue | https://github.com/priba/aproximated_ged |
-| 15 | fori — FORISolver (da aggiungere, esatto) | — | **exact ILP** | D'Ascenzo, Meffert, Mutzel, Rossi (2025), Enhancing GED Computation: Stronger and Orientation-based ILP Formulations, PVLDB 18(11) — implementazione nostra via scipy.optimize.milp (paper in docs/papers) | https://github.com/meffertj/FORI-GED (solo come riferimento; implementazione indipendente) |
+| 15 | fori — FORISolver (da aggiungere, esatto) | — | **exact ILP** | D'Ascenzo, Meffert, Mutzel, Rossi (2025), Enhancing GED Computation: Stronger and Orientation-based ILP Formulations, PVLDB 18(11) — implementazione nostra via scipy.optimize.milp (paper in docs/papers) | 
+https://github.com/meffertj/FORI-GED (solo come riferimento; implementazione indipendente) |
+| 16 | DiffGED | — | diffusion | Wei Huang, Hanchen Wang, Dong Wen, Wenjie Zhang, Ying Zhang, Xuemin Lin:
+DiffGED: Computing Graph Edit Distance via Diffusion-based Graph Matching. CoRR abs/2503.18245 (2025) | Disponibile localmente|
+| 17 | GELATO | — | autoregressivo | P Pellizzoni, T Schulz, K Borgwardt. Gelato: Graph edit distance via autoregressive neural combinatorial optimization International Conference on Learning Representations 2026, 14972-14999 | https://github.com/BorgwardtLab/Gelato|
+| 18 | GraphEDX | — | neurale | Eeshaan Jain, Indradyumna Roy, Saswat Meher, Soumen Chakrabarti, Abir De. Graph Edit Distance with General Costs Using Neural Set Divergence. NeurIPS 2024  | https://github.com/structlearning/GraphEdX|
+| 19 | AppBMao | — | euristico | Mouyi Xu, Lijun Chang: Graph Edit Distance Estimation: A New Heuristic and A Holistic Evaluation of Learning-based Methods. Proc. ACM Manag. Data 3(3): 167:1-167:24 (2025)  | https://github.com/XMYMouyiXu/GED-EXP |
+
