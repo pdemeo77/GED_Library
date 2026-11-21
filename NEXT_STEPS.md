@@ -51,18 +51,20 @@ independent reviews). Each fix needs a regression test.
 18 regression tests added (TestKBestMatchingFixes, TestEGSCFixes,
 TestGraspFixes, TestUpstreamAlignmentFixes).
 
-### 2. TaGED integration — richer ground truth (approved, data validated)
+### 2. TaGED integration — richer ground truth ✅ DONE 2026-11-21 (c339072, 7615da1)
 
-`TaGED.json` (chengqihao repo, all 3 datasets): `[id1, id2, ged, nc, in, ie, mappings]`.
-Verified: identical to our AIDS ground truth on all 245,350 pairs.
+- [x] `scripts/download_taged.py` (AIDS/IMDB/Linux, gitignored, source cited)
+- [x] Loader: `load_taged` / `taged_lookup` / `taged_mapping_matrix` (union
+      of up-to-10 optimal matchings; semantics validated 200/200 on real AIDS)
+- [x] `GEDTrainer`: upstream losses — GedGNN/GedGNN-Full `map+10·MSE`
+      (AIDS/Linux, 1.0 IMDB), GEDIOT/Grasp `2·map+8·MSE`, TaGSim
+      per-component exp targets; auto-enabled when TaGED exists,
+      byte-identical behaviour otherwise
+- [x] Tests: 2 loader + 5 trainer (incl. real-data end-to-end, skipped in CI)
+- [x] GEDTrainer `max_pairs` param for fast smoke runs
 
-- [ ] `scripts/download_taged.py` (fetch into `True_GED/<DS>/TaGED.json`,
-      gitignored, cite source)
-- [ ] Loader in `ged_lib/dataset/` → dict `(id1,id2) -> (ged, nc, in, ie, mappings)`
-- [ ] `GEDTrainer`: optional mapping-supervised loss for GEDIOT / GedGNN /
-      GedGNN-Full / Grasp (`fixed_mapping_loss + w·MSE`, upstream weights)
-- [ ] TaGSim per-component loss (`nc/in/ie` targets)
-- [ ] Tests with tiny synthetic mapping data
+*AIDS TaGED downloaded and validated (245,350 pairs, values identical).
+IMDB/Linux: download on the office machine before the evaluation.*
 
 ### 3. Property-based tests with exact GED
 
