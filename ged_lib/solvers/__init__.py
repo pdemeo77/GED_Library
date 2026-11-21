@@ -31,6 +31,7 @@ def register_solver(name: str) -> Callable[[type[GEDSolver]], type[GEDSolver]]:
 
 
 from ged_lib.solvers.hungarian import HungarianSolver
+from ged_lib.solvers.hed import HEDSolver
 from ged_lib.solvers.gedgw import GEDGWSolver
 
 try:

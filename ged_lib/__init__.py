@@ -22,6 +22,7 @@ __all__ = [
     "list_solvers",
     "set_seed",
     "HungarianSolver",
+    "HEDSolver",
     "GEDGWSolver",
     "GEDIOTSolver",
     "GedGNNSolver",
@@ -74,6 +75,7 @@ def list_solvers() -> dict[str, type[GEDSolver]]:
 
 
 from ged_lib.solvers.hungarian import HungarianSolver
+from ged_lib.solvers.hed import HEDSolver
 from ged_lib.solvers.gedgw import GEDGWSolver
 
 try:

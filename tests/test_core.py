@@ -571,6 +571,70 @@ class TestTrainerMappingLoss:
         assert trainer.used_mapping_loss
 
 
+class TestHEDSolver:
+    """Tests for the HED solver (Fischer et al. 2015, priba port)."""
+
+    def test_identical_graphs_zero(self):
+        from ged_lib import HEDSolver
+
+        g = nx.Graph()
+        g.add_node(0, label="C")
+        g.add_node(1, label="C")
+        g.add_edge(0, 1)
+        assert HEDSolver().compute(g, g) == pytest.approx(0.0)
+
+    def test_symmetry(self):
+        import random
+
+        from ged_lib import HEDSolver
+
+        random.seed(0)
+        g1 = nx.gnp_random_graph(5, 0.4, seed=1)
+        g2 = nx.gnp_random_graph(6, 0.4, seed=2)
+        for n in g1.nodes():
+            g1.nodes[n]["label"] = random.choice(["C", "N"])
+        for n in g2.nodes():
+            g2.nodes[n]["label"] = random.choice(["C", "N"])
+        s = HEDSolver()
+        assert s.compute(g1, g2) == pytest.approx(s.compute(g2, g1), abs=1e-9)
+
+    def test_empty_vs_graph_costs_nodes_plus_edges(self):
+        from ged_lib import HEDSolver
+
+        g = nx.Graph()
+        g.add_nodes_from(range(3))
+        g.add_edge(0, 1)
+        g.add_edge(1, 2)
+        # unit costs: 3 nodes + 2 edges (each node pays half its incident edges)
+        assert HEDSolver().compute(g, nx.Graph()) == pytest.approx(5.0)
+
+    def test_lower_bound_property_vs_networkx(self):
+        """HED is a lower-bound style approximation: HED <= exact GED."""
+        import random
+
+        from ged_lib import HEDSolver
+
+        from networkx.algorithms.similarity import graph_edit_distance
+
+        random.seed(42)
+        solver = HEDSolver()
+        for _ in range(3):
+            g1 = nx.gnp_random_graph(4, 0.5, seed=random.randint(0, 999))
+            g2 = nx.gnp_random_graph(5, 0.5, seed=random.randint(0, 999))
+            for n in g1.nodes():
+                g1.nodes[n]["label"] = random.choice(["A", "B"])
+            for n in g2.nodes():
+                g2.nodes[n]["label"] = random.choice(["A", "B"])
+            exact = graph_edit_distance(g1, g2)
+            assert exact is not None
+            assert solver.compute(g1, g2) <= exact + 1e-9
+
+    def test_registered(self):
+        from ged_lib import list_solvers
+
+        assert "hed" in list_solvers()
+
+
 class TestTaGEDLoader:
     """Tests for the TaGED (mapping-augmented ground truth) loader."""
 

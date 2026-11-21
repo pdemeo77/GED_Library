@@ -13,7 +13,7 @@
 | 11 | greed — GREEDSolver | — | neurale | Ranjan et al. (2022), GREED: A Neural Framework for Learning Graph Distance Functions, NeurIPS | idea-iitd/greed |
 | 12 | gedgnnfull — GEDGNNFullSolver | — | neurale + k-best | Piao et al. (2023), PVLDB ⬜ titolo | ChengzhiPiao/GEDGNN |
 | 13 | grasp — GraspSolver | — | neurale | Lee et al. ⬜ titolo/venue | JunkyuLee1/Grasp |
-| 14 | hed — HEDSolver (da aggiungere) | — | classico | Fischer et al. (2015), Approximation of graph edit distance based on Hausdorff matching ⬜ venue | https://github.com/priba/aproximated_ged |
+| 14 | hed — HEDSolver ✅ aggiunto | — | classico | Fischer, Serrat, Riesen & Bunke (2015), Approximation of graph edit distance based on Hausdorff matching, Pattern Recognition 48(2) | https://github.com/priba/aproximated_ged (port fedele: HausdorffEditDistance.py + VanillaHED.py) |
 | 15 | fori — FORISolver (da aggiungere, esatto) | — | **exact ILP** | D'Ascenzo, Meffert, Mutzel, Rossi (2025), Enhancing GED Computation: Stronger and Orientation-based ILP Formulations, PVLDB 18(11) — implementazione nostra via scipy.optimize.milp (paper in docs/papers) | 
 https://github.com/meffertj/FORI-GED (solo come riferimento; implementazione indipendente) |
 | 16 | DiffGED | — | diffusion | Wei Huang, Hanchen Wang, Dong Wen, Wenjie Zhang, Ying Zhang, Xuemin Lin:
