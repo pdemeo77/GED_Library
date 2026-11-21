@@ -14,6 +14,8 @@ This produces the "GEDGNN-matching" predictions from the paper, which are
 generally more accurate than the neural score alone ("GEDGNN-value").
 """
 
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -27,6 +29,8 @@ from ged_lib.solvers.neural.ged_matrix import GedMatrixModule
 from ged_lib.solvers.neural.layers import AttentionModule, TensorNetworkModule
 from ged_lib.solvers.neural.data_adapter import nx_to_neural_data
 from ged_lib.solvers.neural.kbest_matching import KBestMSolver
+
+logger = logging.getLogger(__name__)
 
 
 class _GINBackbone(nn.Module):
@@ -202,13 +206,17 @@ class GEDGNNFullSolver(NeuralGEDSolver):
             A1, A2 = A2, A1
             f1, f2 = f2, f1
             n1, n2 = n2, n1
+        # Upstream test_matching: the k-best solver consumes
+        # round(softmax(dim=1)(map) * 1e9 + 1) — strictly positive integers.
+        # Raw logits can be negative and break the max-weight matching search.
+        weight = (torch.softmax(weight, dim=1) * 1e9 + 1).round()
 
         try:
             solver = KBestMSolver(weight, A1, A2, f1, f2, pre_ged=neural_ged)
-            best_ged, _ = solver.solve(k=self.k_best)
-            if best_ged < float("inf"):
-                return float(best_ged)
-        except Exception:
-            pass
+            solver.solve(k=self.k_best)
+            if solver.min_ged is not None and solver.min_ged < float("inf"):
+                return float(min(neural_ged, solver.min_ged))
+        except Exception as exc:
+            logger.warning("k-best post-processing failed (%s); using neural GED", exc)
 
         return float(neural_ged)

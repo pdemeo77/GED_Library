@@ -352,6 +352,210 @@ class TestNeuralSolvers:
         assert isinstance(ged, float)
 
 
+class TestKBestMatchingFixes:
+    """Regression tests for the GedGNN-Full k-best post-processing fixes.
+
+    Covers verification_report.md statements S1-S3 plus the reviewer's
+    additional findings (unlabeled node term, weight-matrix scaling).
+    """
+
+    @staticmethod
+    def _path_vs_triangle():
+        """g1: path 0-1-2 (2 edges), g2: triangle (3 edges); distinct labels.
+
+        Adjacencies include self-loops exactly like production edge_index.
+        True GED of the identity mapping = 1 (one edge insertion).
+        """
+        import torch
+
+        A1 = torch.eye(3)
+        A1[0, 1] = A1[1, 0] = 1.0
+        A1[1, 2] = A1[2, 1] = 1.0
+        A2 = torch.ones(3, 3)
+        f = torch.eye(3)
+        return A1, A2, f, f
+
+    def test_root_lb_is_unconstrained(self):
+        """Root lower bound must be the full-space bound (|E1-E2| + label term),
+        not the best matching's own GED (which disabled the whole search)."""
+        import torch
+
+        from ged_lib.solvers.neural.kbest_matching import _GedLowerBound
+
+        A1, A2, f1, f2 = self._path_vs_triangle()
+        lb = _GedLowerBound(A1, A2, f1, f2)
+        # |E1 - E2| = 1; label sums identical -> 0; unconstrained space
+        assert lb.compute([], []) == pytest.approx(1.0)
+
+    def test_full_mapping_edge_term(self):
+        """GED of the identity mapping must be 1.0 (one edge insertion).
+
+        The old total-edge-count formula returned 1.5 (the reviewer's
+        synthetic case): it added |E1-E2|/2 even for full mappings.
+        """
+        from ged_lib.solvers.neural.kbest_matching import _GedLowerBound
+
+        A1, A2, f1, f2 = self._path_vs_triangle()
+        lb = _GedLowerBound(A1, A2, f1, f2)
+        assert lb.compute([], [0, 1, 2]) == pytest.approx(1.0)
+
+    def test_unlabeled_node_term(self):
+        """Unlabeled graphs: node term must be |n2-n1| (upstream branch),
+        not the constant-feature intersection that gave 2*(n2-n1)."""
+        import torch
+
+        from ged_lib.solvers.neural.kbest_matching import _GedLowerBound
+
+        A1 = torch.ones(2, 2)  # edge 0-1 + self-loops
+        A2 = torch.zeros(3, 3)
+        A2[0, 0] = A2[1, 1] = A2[2, 2] = 1.0
+        A2[0, 1] = A2[1, 0] = 1.0  # edge 0-1, node 2 isolated
+        f1 = torch.full((2, 1), 2.0)
+        f2 = torch.full((3, 1), 2.0)
+        lb = _GedLowerBound(A1, A2, f1, f2)
+        assert lb.compute([0], [1]) == pytest.approx(1.0)
+
+    def test_kbest_expands_and_finds_optimum(self):
+        """With weights forcing a bad first matching, the search must expand
+        (k > 1) and discover the identity matching with GED 1."""
+        import torch
+
+        from ged_lib.solvers.neural.kbest_matching import KBestMSolver
+
+        A1 = torch.ones(2, 2)  # g1: edge 0-1 + loops
+        A2 = torch.zeros(3, 3)
+        for i in range(3):
+            A2[i, i] = 1.0
+        A2[0, 1] = A2[1, 0] = 1.0  # g2: edge 0-1 + isolated node 2
+
+        f1 = torch.zeros(2, 3)
+        f1[0, 0] = f1[1, 1] = 1.0  # labels a, b
+        f2 = torch.eye(3)  # labels a, b, c
+
+        # Best full matching (max weight) = {0->2, 1->0} (GED 5); the optimum
+        # identity {0->0, 1->1} (GED 1) must be reached by k-best expansion.
+        W = torch.tensor([[1.0, 1.0, 10.0], [10.0, 1.0, 1.0]])
+        solver = KBestMSolver(W, A1, A2, f1, f2)
+        solver.solve(k=10)
+        assert solver.k > 1, "k-best search never expanded (dead code regression)"
+        assert solver.min_ged == pytest.approx(1.0)
+
+    def test_weight_matrix_softmax_scaled(self, monkeypatch):
+        """The matrix handed to KBestMSolver must be round(softmax*1e9+1):
+        positive integers (raw logits break the max-weight search)."""
+        import torch
+
+        import ged_lib.solvers.neural.gedgnn_full as gedgnn_full_mod
+
+        captured = {}
+
+        class _Capture:
+            def __init__(self, weight, *args, **kwargs):
+                captured["weight"] = weight
+                raise RuntimeError("capture and stop")
+
+        monkeypatch.setattr(gedgnn_full_mod, "KBestMSolver", _Capture)
+        solver = gedgnn_full_mod.GEDGNNFullSolver(num_labels=2)
+        g1 = nx.Graph()
+        g1.add_node(0, label=0)
+        g1.add_node(1, label=1)
+        g1.add_edge(0, 1)
+        g2 = nx.Graph()
+        g2.add_node(0, label=0)
+        g2.add_node(1, label=1)
+        g2.add_node(2, label=0)
+        g2.add_edge(0, 1)
+        result = solver.compute(g1, g2)  # falls back to the neural GED
+        assert isinstance(result, float) and result >= 0.0
+        w = captured["weight"]
+        assert w.min().item() >= 1.0
+        assert torch.equal(w, w.round())
+
+
+class TestGraspFixes:
+    """Regression tests for the Grasp fidelity fixes (verification_report.md S5)."""
+
+    @staticmethod
+    def _path_edge_index():
+        """Path 0-1-2, direction-duplicated + self-loops (production format)."""
+        import torch
+
+        return torch.tensor(
+            [[0, 1, 1, 2, 0, 1, 2], [1, 0, 2, 1, 0, 1, 2]], dtype=torch.long
+        )
+
+    def test_degree_excludes_self_loops(self):
+        """Degrees must equal the undirected degree (self-loops skipped, one
+        count per direction pair); the old version added the self-loop (+1)."""
+        import torch
+
+        from ged_lib import GraspSolver
+
+        s = GraspSolver(num_labels=2, filters=8)
+        deg = s._compute_degree(self._path_edge_index(), 3)
+        assert torch.equal(deg, torch.tensor([[1.0], [2.0], [1.0]]))
+
+    def test_final_mlp_input_width(self):
+        """Final MLP input = raw features + 6 level outputs (degree NOT in)."""
+        from ged_lib import GraspSolver
+
+        s = GraspSolver(num_labels=4, filters=8)
+        assert s.mlp[0].in_features == 4 + 6 * 8
+
+    def test_pattern_features_are_raw_conv_outputs(self):
+        """Level features feeding pattern matrices must be raw conv outputs
+        (the old code applied ReLU, and dropout, before both concat and patterns)."""
+        import torch
+
+        from ged_lib import GraspSolver
+
+        torch.manual_seed(0)
+        s = GraspSolver(num_labels=2, filters=8)
+        s.train()
+        features = torch.eye(2)
+        edge_index = torch.tensor([[0, 1, 0, 1], [1, 0, 0, 1]], dtype=torch.long)
+        _, _, x1, *_ = s._conv_pass(edge_index, features)
+        assert (x1 < 0).any(), "level features must be raw conv outputs, not post-ReLU"
+
+    def test_dropout_zero_deterministic_training(self):
+        """dropout=0.0 must make the conv pass deterministic in train mode."""
+        import torch
+
+        from ged_lib import GraspSolver
+
+        torch.manual_seed(0)
+        s = GraspSolver(num_labels=2, filters=8, dropout=0.0)
+        s.train()
+        features = torch.eye(2)
+        edge_index = torch.tensor([[0, 1, 0, 1], [1, 0, 0, 1]], dtype=torch.long)
+        out_a = s._conv_pass(edge_index, features)[0]
+        out_b = s._conv_pass(edge_index, features)[0]
+        assert torch.equal(out_a, out_b)
+
+
+class TestEGSCFixes:
+    """Regression tests for the EGSC fidelity fix (verification_report.md S4)."""
+
+    def test_se_tensor_network_head_depth(self):
+        """The SE tensor-network head must match upstream fc1: exactly two
+        Linear layers (the fc0 block is dead code upstream)."""
+        import torch
+
+        from ged_lib.solvers.neural.egsc import _SETensorNetwork
+
+        dim = 16
+        mod = _SETensorNetwork(dim)
+        linears = [m for m in mod.fc_out if isinstance(m, torch.nn.Linear)]
+        assert len(linears) == 2
+        assert linears[0].in_features == 2 * dim
+        assert linears[0].out_features == 2 * dim
+        assert linears[1].out_features == dim // 2
+        emb1 = torch.randn(dim, 1)  # graph-level embeddings (dim, 1)
+        emb2 = torch.randn(dim, 1)
+        out = mod(emb1, emb2)
+        assert out.shape == (1, dim // 2)
+
+
 class TestNeuralEmptyGraphGuard:
     """Regression test for the P1 fix: neural solvers on two empty graphs.
 

@@ -61,7 +61,12 @@ def _build_onehot_mapping(n1: int, n2: int, mapping: list) -> torch.Tensor:
 
 
 class _GedLowerBound:
-    """Compute GED lower bounds for partial matchings."""
+    """Compute GED lower bounds for partial matchings.
+
+    Mirrors upstream ``GedLowerBound.label_set`` (ChengzhiPiao/GEDGNN):
+    lower bound of the GED of any full matching that extends the partial
+    assignment ``left_nodes[i] -> right_nodes[i]``.
+    """
 
     def __init__(self, A1: torch.Tensor, A2: torch.Tensor, f1: torch.Tensor, f2: torch.Tensor):
         self.A1 = A1
@@ -70,49 +75,57 @@ class _GedLowerBound:
         self.f2 = f2
         self.n1 = A1.size(0)
         self.n2 = A2.size(0)
+        # Upstream: ndata['f'].shape[1] == 1 means unlabeled (constant 2.0).
+        self.has_node_label = f1.size(1) > 1
 
-    def _matching_cost(self, left_nodes: list, right_nodes: list) -> float:
-        if len(left_nodes) == 0:
-            return 0.0
-        idx_left = torch.tensor(left_nodes)
-        idx_right = torch.tensor(right_nodes)
-        sub_A1 = self.A1[idx_left][:, idx_left]
-        sub_A2 = self.A2[idx_right][:, idx_right]
-        A_ged = ((sub_A1 - sub_A2) ** 2).sum().item()
-        sub_f1 = self.f1[left_nodes]
-        sub_f2 = self.f2[right_nodes]
-        F_ged = ((sub_f1 - sub_f2) ** 2).sum().item()
-        return (A_ged + F_ged) / 2.0
+    @staticmethod
+    def _num_edges(A: torch.Tensor) -> float:
+        """Undirected edge count from a dense adjacency that may contain self-loops."""
+        return (A.sum() - torch.diag(A).sum()).item() / 2.0
 
-    def compute(self, left_nodes: list, right_nodes: list) -> float:
+    def compute(self, left_nodes: list, right_nodes: list):
+        """Lower bound for matchings extending left_nodes -> right_nodes.
+
+        Returns None when right_nodes is None (no candidate matching), as upstream.
+        """
+        if right_nodes is None:
+            return None
+
         partial_n = len(left_nodes)
 
-        if partial_n == 0 and right_nodes is not None and len(right_nodes) == self.n1:
+        if partial_n == 0 and len(right_nodes) == self.n1:
+            # A full mapping is given implicitly: promote to all of graph 1.
             left_nodes = list(range(self.n1))
             partial_n = self.n1
 
-        if right_nodes is None:
-            return float("inf")
+        # Cost of the mapped part: adjacency + features of the induced subgraphs.
+        if partial_n > 0:
+            idx_left = torch.tensor(left_nodes)
+            idx_right = torch.tensor(right_nodes)
+            sub_A1 = self.A1[idx_left][:, idx_left]
+            sub_A2 = self.A2[idx_right][:, idx_right]
+            sub_f1 = self.f1[left_nodes]
+            sub_f2 = self.f2[right_nodes]
+            A_ged = ((sub_A1 - sub_A2) ** 2).sum().item()
+            F_ged = ((sub_f1 - sub_f2) ** 2).sum().item()
+            lb = (A_ged + F_ged) / 2.0
+            e1_sub = (sub_A1.sum() - torch.diag(sub_A1).sum()).item() / 2.0
+            e2_sub = (sub_A2.sum() - torch.diag(sub_A2).sum()).item() / 2.0
+        else:
+            lb = 0.0
+            e1_sub = 0.0
+            e2_sub = 0.0
 
-        lb = self._matching_cost(left_nodes, right_nodes)
+        # Edge term: difference of the edges OUTSIDE the mapped subgraphs
+        # (upstream: g.num_edges() - n - sub.num_edges(), halved for the
+        # direction-duplicated edge list — equivalent to E_total - E_sub).
+        e1_out = self._num_edges(self.A1) - e1_sub
+        e2_out = self._num_edges(self.A2) - e2_sub
+        lb += abs(e1_out - e2_out)
 
-        diag1 = torch.diag(self.A1)
-        diag2 = torch.diag(self.A2)
-        m1 = (
-            diag1.sum().item() - diag1[left_nodes].sum().item()
-            if len(left_nodes) > 0
-            else diag1.sum().item()
-        )
-        m2 = (
-            diag2.sum().item() - diag2[right_nodes].sum().item()
-            if len(right_nodes) > 0
-            else diag2.sum().item()
-        )
-        m1_real = (self.A1.sum().item() - m1) / 2.0
-        m2_real = (self.A2.sum().item() - m2) / 2.0
-        lb += abs(m1_real - m2_real) / 2.0
-
-        if partial_n == self.n1:
+        # Node term.
+        if (not self.has_node_label) or (partial_n == self.n1):
+            # Full mapping, or unlabeled graphs: unmatched nodes cost 1 each.
             lb += self.n2 - self.n1
         else:
             mask1 = torch.ones(self.n1, dtype=torch.bool)
@@ -253,12 +266,15 @@ class KBestMSolver:
         sp = _Subspace(G, best_matching, res)
 
         self.lb = _GedLowerBound(A1, A2, f1, f2)
-        sp.lb = self.lb.compute([], best_matching)
-        sp.ged = self.lb.compute([], best_matching)
+        # Root lower bound over the UNCONSTRAINED solution space (upstream
+        # label_set([], [])); using the best matching's own GED here would
+        # make lb == ged and the expansion condition unsatisfiable, turning
+        # the whole k-best search into dead code.
+        sp.lb = self.lb.compute([], [])
+        sp.ged = self.lb.compute([], sp.best_matching)
         self.min_ged = sp.ged
-        if sp.second_matching is not None:
-            sp.ged2 = self.lb.compute([], sp.second_matching)
-            self._update_min_ged(sp.ged2)
+        sp.ged2 = self.lb.compute([], sp.second_matching)
+        self._update_min_ged(sp.ged2)
 
         self.subspaces = [sp]
         self.k = 1
