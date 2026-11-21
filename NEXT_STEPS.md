@@ -73,11 +73,18 @@ IMDB/Linux: download on the office machine before the evaluation.*
 
 ### 4. New solvers
 
-- [ ] **HED** (row 14 of `docs/solver.md`): port from priba repo summary in
-      `verification_report.md` (Hausdorff matching; no LSAP; lower-bound style)
+- [x] **HED** (row 14) — DONE 2026-11-21 (`412352d`): faithful priba port,
+      5 tests incl. first property test (HED ≤ networkx exact GED)
 - [ ] **FORISolver** (row 15): exact ILP from D'Ascenzo et al. PVLDB 2025
       (paper in `docs/papers/`), implement via `scipy.optimize.milp` (HiGHS),
       constraints 5a–5g; verify against their published optimal solutions
+- [ ] **App-BMao** (row 19, GED-EXP repo in `../ged_upstream_refs/GED-EXP/`):
+      read Models/App-BMao (Python + `ged` C++ binary — assess portability),
+      heuristic upper bound, beats learning methods per the paper
+- [ ] **GraphEdX** (row 18, structlearning/GraphEdX), **DiffGED** (row 16,
+      code in `../ged_upstream_refs/DiffGED/`), **GELATO** (row 17,
+      BorgwardtLab/Gelato)
+- [ ] Wave 2 (post-evaluation): SDTED, ERIC, GENN-A* (all in GED-EXP)
 
 ### 5. Code quality phases (P2/P3/P4)
 
