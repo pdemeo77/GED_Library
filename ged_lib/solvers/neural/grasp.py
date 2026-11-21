@@ -66,6 +66,8 @@ class GraspSolver(NeuralGEDSolver):
         cost_att_dim: Cross-attention dimension for cost aggregation.
         tensor_neurons: Tensor network neurons for bias.
         bottleneck: Bottleneck layer sizes for bias MLP.
+        dropout: Dropout probability between GIN layers. Upstream disables it
+            (0.0) for IMDB — pass 0.0 there.
         target_mode: "exp" or "linear" normalization.
         device: Torch device string.
     """
@@ -79,6 +81,7 @@ class GraspSolver(NeuralGEDSolver):
         cost_att_dim: int = 32,
         tensor_neurons: int = 16,
         bottleneck: tuple = (128, 64, 32),
+        dropout: float = 0.5,
         target_mode: str = "exp",
         device: str = "cpu",
     ) -> None:
@@ -88,6 +91,7 @@ class GraspSolver(NeuralGEDSolver):
         self.device = torch.device(device)
         self.filters = filters
         self.bilinear_dim = bilinear_dim
+        self.dropout = dropout
 
         self._build_gin(filters)
         self._build_pattern_matrices(filters, bilinear_dim)
@@ -120,7 +124,9 @@ class GraspSolver(NeuralGEDSolver):
         self.conv4 = self._make_gin_layer(filters)
         self.conv5 = self._make_gin_layer(filters)
 
-        k = self.num_labels + 1 + filters * 6
+        # Upstream final-MLP input: raw features + 6 level outputs — the
+        # degree feature feeds ONLY layer0_emb, it is not concatenated here.
+        k = self.num_labels + filters * 6
         self.mlp = nn.Sequential(
             nn.Linear(k, k * 2),
             nn.ReLU(),
@@ -175,34 +181,40 @@ class GraspSolver(NeuralGEDSolver):
         self.scoring = nn.Linear(b3, 1)
 
     def _compute_degree(self, edge_index: torch.Tensor, n: int) -> torch.Tensor:
-        """Compute node degrees efficiently using torch_geometric.utils.degree."""
-        deg = pyg_degree(edge_index[0], num_nodes=n).unsqueeze(1)
+        """Node degrees over the direction-duplicated edge list, self-loops
+        excluded (upstream iterates the edge entries minus the trailing n
+        self-loops), i.e. twice the undirected degree.
+        """
+        src = edge_index[0]
+        mask = src != edge_index[1]
+        deg = pyg_degree(src[mask], num_nodes=n).unsqueeze(1)
         return deg
 
     def _conv_pass(self, edge_index: torch.Tensor, features: torch.Tensor):
-        n = features.size(0)
-        degree = self._compute_degree(edge_index, n)
+        degree = self._compute_degree(edge_index, features.size(0))
         x0 = self.layer0_emb(torch.cat((features, degree), dim=1))
 
-        feat_list = torch.cat([features, degree, x0], dim=1)
+        # Upstream concatenates [features, f0..f5] with the RAW conv outputs;
+        # ReLU/dropout versions only feed the next convolution.
+        feat_list = torch.cat([features, x0], dim=1)
 
-        x1 = F.relu(self.conv1(x0, edge_index))
+        x1 = self.conv1(x0, edge_index)
         feat_list = torch.cat([feat_list, x1], dim=1)
-        x1 = F.dropout(x1, p=0.5, training=self.training)
+        h1 = F.dropout(F.relu(x1), p=self.dropout, training=self.training)
 
-        x2 = F.relu(self.conv2(x1, edge_index))
+        x2 = self.conv2(h1, edge_index)
         feat_list = torch.cat([feat_list, x2], dim=1)
-        x2 = F.dropout(x2, p=0.5, training=self.training)
+        h2 = F.dropout(F.relu(x2), p=self.dropout, training=self.training)
 
-        x3 = F.relu(self.conv3(x2, edge_index))
+        x3 = self.conv3(h2, edge_index)
         feat_list = torch.cat([feat_list, x3], dim=1)
-        x3 = F.dropout(x3, p=0.5, training=self.training)
+        h3 = F.dropout(F.relu(x3), p=self.dropout, training=self.training)
 
-        x4 = F.relu(self.conv4(x3, edge_index))
+        x4 = self.conv4(h3, edge_index)
         feat_list = torch.cat([feat_list, x4], dim=1)
-        x4 = F.dropout(x4, p=0.5, training=self.training)
+        h4 = F.dropout(F.relu(x4), p=self.dropout, training=self.training)
 
-        x5 = self.conv5(x4, edge_index)
+        x5 = self.conv5(h4, edge_index)
         feat_list = torch.cat([feat_list, x5], dim=1)
 
         final = self.mlp(feat_list)
