@@ -73,9 +73,11 @@ class _SETensorNetwork(nn.Module):
             nn.Linear(channel // 4, channel),
             nn.Sigmoid(),
         )
+        # Upstream SETensorNetworkModule.forward uses ONLY its fc1
+        # (Linear(c,c) -> ReLU -> Linear(c, dim//2) -> ReLU). Its fc0 block
+        # is defined but never called (commented out in EGSC-KD as well) —
+        # do not activate that dead block here.
         self.fc_out = nn.Sequential(
-            nn.Linear(channel, channel),
-            nn.ReLU(inplace=True),
             nn.Linear(channel, channel),
             nn.ReLU(inplace=True),
             nn.Linear(channel, dim // 2),
