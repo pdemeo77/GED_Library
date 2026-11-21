@@ -27,6 +27,9 @@ checkpoints/
 results/
 *.pt
 
+# TaGED ground truth (large, downloaded on demand via scripts/download_taged.py)
+True_GED/**/TaGED.json
+
 # Local-only working notes (NOT for the public repo)
 code_review.md
 PLAN.md

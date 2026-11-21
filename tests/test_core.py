@@ -472,6 +472,53 @@ class TestKBestMatchingFixes:
         assert torch.equal(w, w.round())
 
 
+class TestTaGEDLoader:
+    """Tests for the TaGED (mapping-augmented ground truth) loader."""
+
+    @staticmethod
+    def _write_taged(tmp_path, entries):
+        import json
+
+        folder = tmp_path / "AIDS"
+        folder.mkdir()
+        (folder / "TaGED.json").write_text(json.dumps(entries), encoding="utf-8")
+        return folder.parent
+
+    def test_load_taged(self, tmp_path):
+        from ged_lib.dataset.loader import load_taged
+
+        root = self._write_taged(
+            tmp_path,
+            [
+                [8116, 559, 1, 1, 0, 0, [[0, 1]]],
+                [8116, 5726, 3, 1, 1, 1, [[2, 0], [1, 0]]],
+            ],
+        )
+        taged = load_taged("aids", root=str(root))
+        assert set(taged) == {(8116, 559), (8116, 5726)}
+        ged, nc, in_, ie, mappings = taged[(8116, 559)]
+        assert (ged, nc, in_, ie) == (1.0, 1.0, 0.0, 0.0)
+        assert mappings == [[0, 1]]
+
+    def test_load_taged_missing_raises(self, tmp_path):
+        from ged_lib.dataset.loader import load_taged
+
+        with pytest.raises(FileNotFoundError, match="download_taged"):
+            load_taged("AIDS", root=str(tmp_path))
+
+    def test_lookup_swaps_reversed_mapping(self):
+        from ged_lib.dataset.loader import taged_lookup
+
+        taged = {(1, 2): (3.0, 1.0, 1.0, 1.0, [[0, 4], [1, 5]])}
+        # forward order: mapping unchanged
+        _, _, _, _, m = taged_lookup(taged, 1, 2)
+        assert m == [[0, 4], [1, 5]]
+        # reversed order: mapping pairs must be swapped
+        _, _, _, _, m_rev = taged_lookup(taged, 2, 1)
+        assert m_rev == [[4, 0], [5, 1]]
+        assert taged_lookup(taged, 7, 8) is None
+
+
 class TestUpstreamAlignmentFixes:
     """Regression tests for the design-alignment fixes (NEXT_STEPS §1B)."""
 
