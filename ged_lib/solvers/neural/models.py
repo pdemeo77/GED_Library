@@ -127,6 +127,52 @@ class _GINBackbone(nn.Module):
         return self.mlp(x_list)
 
 
+class _PlainGINEncoder(nn.Module):
+    """Plain 3-layer GIN pass — the upstream GedGNN encoder.
+
+    conv1 -> ReLU -> dropout -> conv2 -> ReLU -> dropout -> conv3 (raw output).
+    No multi-scale concatenation and no post-MLP: those belong to the GEDIOT
+    encoder (_GINBackbone) only.
+    """
+
+    def __init__(
+        self, num_labels: int, filters: tuple = (64, 32, 16), dropout: float = 0.5
+    ):
+        super().__init__()
+        f1, f2, f3 = filters
+
+        nn1 = nn.Sequential(
+            nn.Linear(num_labels, f1),
+            nn.ReLU(),
+            nn.Linear(f1, f1),
+            nn.BatchNorm1d(f1, track_running_stats=False),
+        )
+        nn2 = nn.Sequential(
+            nn.Linear(f1, f2),
+            nn.ReLU(),
+            nn.Linear(f2, f2),
+            nn.BatchNorm1d(f2, track_running_stats=False),
+        )
+        nn3 = nn.Sequential(
+            nn.Linear(f2, f3),
+            nn.ReLU(),
+            nn.Linear(f3, f3),
+            nn.BatchNorm1d(f3, track_running_stats=False),
+        )
+        self.conv1 = GINConv(nn1, train_eps=True)
+        self.conv2 = GINConv(nn2, train_eps=True)
+        self.conv3 = GINConv(nn3, train_eps=True)
+        self.f3 = f3
+        self.dropout = dropout
+
+    def forward(self, edge_index: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
+        x = F.relu(self.conv1(features, edge_index))
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = F.relu(self.conv2(x, edge_index))
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        return self.conv3(x, edge_index)
+
+
 @register_solver("gediot")
 class GEDIOTSolver(NeuralGEDSolver):
     """GED via Inverse Optimal Transport (GEDIOT).
@@ -135,17 +181,17 @@ class GEDIOTSolver(NeuralGEDSolver):
     Uses GIN embeddings + learned cost matrix + differentiable Sinkhorn OT.
     Requires pre-trained weights for inference.
 
-    Default hyperparameters:
-        filters = (64, 32, 16), hidden_dim = 16, tensor_neurons = 16
-        bottleneck = (128, 64, 32), target_mode = "linear"
+    Default hyperparameters (upstream chengqihao param_parser):
+        filters = (128, 64, 32), hidden_dim = 16, tensor_neurons = 16
+        bottleneck = (16, 8, 4), target_mode = "linear"
     """
 
     def __init__(
         self,
         num_labels: int = 29,
-        filters: tuple = (64, 32, 16),
+        filters: tuple = (128, 64, 32),
         tensor_neurons: int = 16,
-        bottleneck: tuple = (128, 64, 32),
+        bottleneck: tuple = (16, 8, 4),
         target_mode: str = "linear",
         device: str = "cpu",
     ) -> None:
@@ -219,17 +265,22 @@ class GEDIOTSolver(NeuralGEDSolver):
 class GedGNNSolver(NeuralGEDSolver):
     """GED Graph Neural Network (GedGNN) solver.
 
-    Uses GIN embeddings + learned mapping/cost matrices.
+    Uses a plain 3-layer GIN encoder (upstream GedGNN, NOT the multi-scale
+    GEDIOT encoder) + learned mapping/cost matrices.
     Requires pre-trained weights.
+
+    Default hyperparameters (upstream param_parser):
+        filters = (128, 64, 32), hidden_dim = 16, tensor_neurons = 16
+        bottleneck = (16, 8, 4), target_mode = "linear"
     """
 
     def __init__(
         self,
         num_labels: int = 29,
-        filters: tuple = (64, 32, 16),
+        filters: tuple = (128, 64, 32),
         hidden_dim: int = 16,
         tensor_neurons: int = 16,
-        bottleneck: tuple = (128, 64, 32),
+        bottleneck: tuple = (16, 8, 4),
         target_mode: str = "linear",
         device: str = "cpu",
     ) -> None:
@@ -240,7 +291,7 @@ class GedGNNSolver(NeuralGEDSolver):
         f1, f2, f3 = filters
         self.filters_3 = f3
 
-        self.gin = _GINBackbone(self.num_labels, filters)
+        self.gin = _PlainGINEncoder(self.num_labels, filters)
         self.map_matrix = GedMatrixModule(f3, hidden_dim)
         self.cost_matrix_mod = GedMatrixModule(f3, hidden_dim)
 
@@ -314,7 +365,7 @@ class SimGNNSolver(NeuralGEDSolver):
         num_labels: int = 29,
         filters: tuple = (64, 32, 16),
         tensor_neurons: int = 16,
-        bottleneck: tuple = (128, 64, 32),
+        bottleneck: int = 16,
         histogram: bool = True,
         bins: int = 16,
         target_mode: str = "exp",
@@ -336,11 +387,9 @@ class SimGNNSolver(NeuralGEDSolver):
 
         self.attention = AttentionModule(f3)
         self.tensor_network = TensorNetworkModule(f3, tensor_neurons)
-        b1, b2, b3 = bottleneck
-        self.fc1 = nn.Linear(feature_count, b1)
-        self.fc2 = nn.Linear(b1, b2)
-        self.fc3 = nn.Linear(b2, b3)
-        self.scoring = nn.Linear(b3, 1)
+        # Upstream (Rozemberczki) head: a single bottleneck layer + scoring.
+        self.fc1 = nn.Linear(feature_count, bottleneck)
+        self.scoring = nn.Linear(bottleneck, 1)
 
         self.to(self.device)
         self.eval()
@@ -369,8 +418,6 @@ class SimGNNSolver(NeuralGEDSolver):
             scores = torch.cat((scores, hist.view(1, -1)), dim=1)
 
         scores = F.relu(self.fc1(scores))
-        scores = F.relu(self.fc2(scores))
-        scores = F.relu(self.fc3(scores))
         score = torch.sigmoid(self.scoring(scores).view(-1))
 
         if self.target_mode == "exp":
@@ -532,10 +579,10 @@ class GPNSolver(NeuralGEDSolver):
     def __init__(
         self,
         num_labels: int = 29,
-        filters: tuple = (64, 32, 16),
+        filters: tuple = (128, 64, 32),
         tensor_neurons: int = 16,
-        bottleneck: tuple = (128,),
-        target_mode: str = "exp",
+        bottleneck: tuple = (16,),
+        target_mode: str = "linear",
         device: str = "cpu",
     ) -> None:
         super().__init__()

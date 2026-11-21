@@ -27,8 +27,27 @@ from ged_lib.solvers import register_solver
 from ged_lib.solvers.neural.data_adapter import get_label_map
 
 
+def _union_label_map(g1: nx.Graph, g2: nx.Graph) -> dict:
+    """Shared label -> index mapping over the UNION of both graphs' labels.
+
+    Used when no dataset label map is available: encoding each graph
+    separately can place the same label in different one-hot columns,
+    making identical labels look different to the cross cost.
+    """
+    labels = set()
+    for g in (g1, g2):
+        for _, data in g.nodes(data=True):
+            if "label" in data:
+                labels.add(data["label"])
+    ordered = sorted(labels, key=lambda x: (type(x).__name__, str(x)))
+    return {lab: i for i, lab in enumerate(ordered)}
+
+
 def _get_label_features(
-    g: nx.Graph, num_labels: Optional[int] = None, label_map: Optional[dict[str, int]] = None
+    g: nx.Graph,
+    num_labels: Optional[int] = None,
+    label_map: Optional[dict[str, int]] = None,
+    label_to_idx: Optional[dict] = None,
 ) -> np.ndarray:
     """Extract one-hot node label features from a graph.
 
@@ -36,6 +55,9 @@ def _get_label_features(
         g: Input graph.
         num_labels: Total number of distinct labels. If None, auto-detect.
         label_map: Optional mapping from string labels to integer indices.
+        label_to_idx: Optional shared label -> index mapping (e.g. from
+            _union_label_map) so that both graphs of a pair use the same
+            one-hot columns.
 
     Returns:
         Numpy array of shape (n, d) with one-hot features.
@@ -64,10 +86,11 @@ def _get_label_features(
             else:
                 labels.append(-1)
     else:
-        unique = sorted(set(labels_raw))
-        label_to_idx = {l: i for i, l in enumerate(unique)}
-        d = len(unique)
-        labels = [label_to_idx[l] for l in labels_raw]
+        if label_to_idx is None:
+            unique = sorted(set(labels_raw))
+            label_to_idx = {l: i for i, l in enumerate(unique)}
+        d = max(len(label_to_idx), 1)
+        labels = [label_to_idx.get(l, -1) for l in labels_raw]
 
     features = np.zeros((n, d), dtype=np.float64)
     for i, label in enumerate(labels):
@@ -129,8 +152,13 @@ class GEDGWSolver(GEDSolver):
         nodes1 = sorted(g1.nodes())
         nodes2 = sorted(g2.nodes())
 
-        f1 = _get_label_features(g1, num_labels=self._num_labels, label_map=self._label_map)
-        f2 = _get_label_features(g2, num_labels=self._num_labels, label_map=self._label_map)
+        shared_map = _union_label_map(g1, g2) if self._num_labels is None else None
+        f1 = _get_label_features(
+            g1, num_labels=self._num_labels, label_map=self._label_map, label_to_idx=shared_map
+        )
+        f2 = _get_label_features(
+            g2, num_labels=self._num_labels, label_map=self._label_map, label_to_idx=shared_map
+        )
 
         d1 = f1.shape[1]
         d2 = f2.shape[1]

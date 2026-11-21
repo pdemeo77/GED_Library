@@ -62,7 +62,9 @@ class TensorNetworkModule(torch.nn.Module):
 
         torch.nn.init.xavier_uniform_(self.weight_matrix)
         torch.nn.init.xavier_uniform_(self.weight_matrix_block)
-        torch.nn.init.zeros_(self.bias)
+        # Upstream initializes the bias with xavier_uniform_ as well
+        # (chengqihao and rozemberczki layers.py).
+        torch.nn.init.xavier_uniform_(self.bias)
 
     def forward(self, embedding_1: torch.Tensor, embedding_2: torch.Tensor) -> torch.Tensor:
         """Compute similarity vector from two graph representations.

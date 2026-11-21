@@ -19,73 +19,17 @@ import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn.conv import GINConv
 
 import networkx as nx
 
 from ged_lib.solvers import register_solver
-from ged_lib.solvers.neural.models import NeuralGEDSolver
+from ged_lib.solvers.neural.models import NeuralGEDSolver, _PlainGINEncoder
 from ged_lib.solvers.neural.ged_matrix import GedMatrixModule
 from ged_lib.solvers.neural.layers import AttentionModule, TensorNetworkModule
 from ged_lib.solvers.neural.data_adapter import nx_to_neural_data
 from ged_lib.solvers.neural.kbest_matching import KBestMSolver
 
 logger = logging.getLogger(__name__)
-
-
-class _GINBackbone(nn.Module):
-    """3-layer GIN backbone with multi-scale feature concatenation."""
-
-    def __init__(self, num_labels: int, filters: tuple = (64, 32, 16)):
-        super().__init__()
-        f1, f2, f3 = filters
-        self.num_labels = num_labels
-
-        nn1 = nn.Sequential(
-            nn.Linear(num_labels, f1),
-            nn.ReLU(),
-            nn.Linear(f1, f1),
-            nn.BatchNorm1d(f1, track_running_stats=False),
-        )
-        nn2 = nn.Sequential(
-            nn.Linear(f1, f2),
-            nn.ReLU(),
-            nn.Linear(f2, f2),
-            nn.BatchNorm1d(f2, track_running_stats=False),
-        )
-        nn3 = nn.Sequential(
-            nn.Linear(f2, f3),
-            nn.ReLU(),
-            nn.Linear(f3, f3),
-            nn.BatchNorm1d(f3, track_running_stats=False),
-        )
-        self.conv1 = GINConv(nn1, train_eps=True)
-        self.conv2 = GINConv(nn2, train_eps=True)
-        self.conv3 = GINConv(nn3, train_eps=True)
-        self.f3 = f3
-
-        k = num_labels + f1 + f2 + f3
-        self.mlp = nn.Sequential(
-            nn.Linear(k, k * 2),
-            nn.ReLU(),
-            nn.Linear(k * 2, k),
-            nn.ReLU(),
-            nn.Linear(k, f3),
-        )
-
-    def forward(self, edge_index: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
-        x_list = features
-        x = self.conv1(features, edge_index)
-        x_list = torch.cat([x_list, x], dim=1)
-        x = F.relu(x)
-        x = F.dropout(x, p=0.5, training=self.training)
-        x = self.conv2(x, edge_index)
-        x_list = torch.cat([x_list, x], dim=1)
-        x = F.relu(x)
-        x = F.dropout(x, p=0.5, training=self.training)
-        x = self.conv3(x, edge_index)
-        x_list = torch.cat([x_list, x], dim=1)
-        return self.mlp(x_list)
 
 
 def _build_adj_dense(edge_index: torch.Tensor, n: int) -> torch.Tensor:
@@ -120,10 +64,10 @@ class GEDGNNFullSolver(NeuralGEDSolver):
     def __init__(
         self,
         num_labels: int = 29,
-        filters: tuple = (64, 32, 16),
+        filters: tuple = (128, 64, 32),
         hidden_dim: int = 16,
         tensor_neurons: int = 16,
-        bottleneck: tuple = (128, 64, 32),
+        bottleneck: tuple = (16, 8, 4),
         target_mode: str = "linear",
         k_best: int = 10,
         device: str = "cpu",
@@ -136,7 +80,7 @@ class GEDGNNFullSolver(NeuralGEDSolver):
         f1, f2, f3 = filters
         self.filters_3 = f3
 
-        self.gin = _GINBackbone(self.num_labels, filters)
+        self.gin = _PlainGINEncoder(self.num_labels, filters)
         self.map_matrix = GedMatrixModule(f3, hidden_dim)
         self.cost_matrix_mod = GedMatrixModule(f3, hidden_dim)
 

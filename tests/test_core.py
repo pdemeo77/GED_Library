@@ -472,6 +472,80 @@ class TestKBestMatchingFixes:
         assert torch.equal(w, w.round())
 
 
+class TestUpstreamAlignmentFixes:
+    """Regression tests for the design-alignment fixes (NEXT_STEPS §1B)."""
+
+    def test_gedgnn_uses_plain_gin_encoder(self):
+        from ged_lib import GedGNNSolver
+        from ged_lib.solvers.neural.models import _PlainGINEncoder
+
+        s = GedGNNSolver(num_labels=4)
+        assert isinstance(s.gin, _PlainGINEncoder)
+        assert not hasattr(s.gin, "mlp"), "multi-scale MLP belongs to GEDIOT only"
+
+    def test_gediot_keeps_multiscale_encoder(self):
+        from ged_lib import GEDIOTSolver
+
+        s = GEDIOTSolver(num_labels=4)
+        assert hasattr(s.gin, "mlp"), "GEDIOT keeps the multi-scale encoder"
+
+    def test_gedgnn_full_uses_plain_encoder(self):
+        from ged_lib import GEDGNNFullSolver
+        from ged_lib.solvers.neural.models import _PlainGINEncoder
+
+        s = GEDGNNFullSolver(num_labels=4)
+        assert isinstance(s.gin, _PlainGINEncoder)
+
+    def test_simgnn_single_bottleneck_head(self):
+        from ged_lib import SimGNNSolver
+
+        s = SimGNNSolver(num_labels=4)
+        assert not hasattr(s, "fc2") and not hasattr(s, "fc3")
+        assert s.fc1.out_features == 16
+        assert s.scoring.in_features == 16
+
+    def test_gpn_upstream_defaults(self):
+        from ged_lib import GPNSolver
+
+        s = GPNSolver(num_labels=4)
+        assert s.target_mode == "linear"
+        assert s.fc1.out_features == 16  # bottleneck (16,)
+        assert s.conv1.nn[0].out_features == 128  # filters (128, 64, 32)
+
+    def test_gediot_upstream_defaults(self):
+        from ged_lib import GEDIOTSolver
+
+        s = GEDIOTSolver(num_labels=4)
+        assert s.fc1.out_features == 16  # bottleneck (16, 8, 4)
+        assert s.gin.conv1.nn[0].out_features == 128  # filters (128, 64, 32)
+
+    def test_tensor_network_bias_xavier(self):
+        import torch
+
+        from ged_lib.solvers.neural.layers import TensorNetworkModule
+
+        torch.manual_seed(0)
+        tn = TensorNetworkModule(8, 16)
+        assert (tn.bias != 0).any(), "bias must be xavier-initialized, not zeros"
+
+    def test_gedgw_union_label_encoding(self):
+        from ged_lib.solvers.gedgw import _get_label_features, _union_label_map
+
+        g1 = nx.Graph()
+        g1.add_node(0, label="B")
+        g2 = nx.Graph()
+        g2.add_node(0, label="A")
+        g2.add_node(1, label="B")
+        m = _union_label_map(g1, g2)
+        f1 = _get_label_features(g1, label_to_idx=m)
+        f2 = _get_label_features(g2, label_to_idx=m)
+        # "B" must sit in the SAME column in both matrices (the old per-graph
+        # encoding put it in column 0 of f1 and column 1 of f2)
+        assert f1.shape[1] == f2.shape[1]
+        assert f1[0, m["B"]] == 1.0
+        assert f2[1, m["B"]] == 1.0
+
+
 class TestGraspFixes:
     """Regression tests for the Grasp fidelity fixes (verification_report.md S5)."""
 
